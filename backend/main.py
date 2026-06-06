@@ -17,9 +17,24 @@ BASE_DIR   = pathlib.Path(__file__).parent
 NOTES_DIR  = BASE_DIR / "notes"
 NOTES_DIR.mkdir(exist_ok=True)
 
-TOPICS_TREE:  list = json.loads((BASE_DIR / "topics_tree.json").read_text())
-TOPICS_FLAT:  list = json.loads((BASE_DIR / "topics_flat.json").read_text())
-TOPICS_INDEX: dict = {r["key"]: r for r in TOPICS_FLAT}
+TOPICS_TREE: list = json.loads((BASE_DIR / "topics_tree.json").read_text())
+
+def _build_index(tree: list) -> dict:
+    index = {}
+    for ph in tree:
+        for g in ph["groups"]:
+            for s in g["subtopics"]:
+                for item in s["items"]:
+                    key = f"{ph['phase']}|{g['name']}|{s['name']}|{item}"
+                    index[key] = {
+                        "key": key, "phase": ph["phase"], "emoji": ph["emoji"],
+                        "color": ph["color"], "title": ph["title"],
+                        "group": g["name"], "tier": g["tier"],
+                        "subtopic": s["name"], "item": item,
+                    }
+    return index
+
+TOPICS_INDEX: dict = _build_index(TOPICS_TREE)
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
