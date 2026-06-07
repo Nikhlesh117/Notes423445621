@@ -5,10 +5,10 @@ import os
 import pathlib
 import re
 
-import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 load_dotenv()
@@ -17,7 +17,7 @@ BASE_DIR   = pathlib.Path(__file__).parent
 NOTES_DIR  = BASE_DIR / "notes"
 NOTES_DIR.mkdir(exist_ok=True)
 
-TOPICS_TREE: list = json.loads((BASE_DIR / "topics_tree.json").read_text())
+TOPICS_TREE: list = json.loads((BASE_DIR / "topics_tree.json").read_text(encoding="utf-8"))
 
 def _build_index(tree: list) -> dict:
     index = {}
@@ -36,13 +36,23 @@ def _build_index(tree: list) -> dict:
 
 TOPICS_INDEX: dict = _build_index(TOPICS_TREE)
 
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+_api_key = os.environ.get("ANTHROPIC_API_KEY")
+_client  = None
+
+def get_client():
+    global _client
+    if not _api_key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set — AI generation unavailable")
+    if _client is None:
+        import anthropic
+        _client = anthropic.Anthropic(api_key=_api_key)
+    return _client
 
 app = FastAPI(title="AI/ML Notes API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:8000", "http://localhost:8000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -108,7 +118,7 @@ def get_note(encoded_key: str):
     path = note_path(encoded_key)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Note not found")
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @app.post("/api/note/{encoded_key}/generate", response_model=NoteResponse)
@@ -119,7 +129,8 @@ def generate_note(encoded_key: str):
         raise HTTPException(status_code=404, detail=f"Unknown topic key: {raw_key!r}")
 
     try:
-        message = client.messages.create(
+        import anthropic
+        message = get_client().messages.create(
             model="claude-sonnet-4-6",
             max_tokens=2048,
             messages=[{"role": "user", "content": build_prompt(topic)}],
@@ -144,7 +155,7 @@ def generate_note(encoded_key: str):
         "model":        "claude-sonnet-4-6",
         "sections":     sections_dict,
     }
-    note_path(encoded_key).write_text(json.dumps(note, ensure_ascii=False, indent=2))
+    note_path(encoded_key).write_text(json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8")
     return note
 
 
@@ -153,9 +164,9 @@ def update_note(encoded_key: str, body: NoteUpdateRequest):
     path = note_path(encoded_key)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Note not found; generate it first")
-    existing = json.loads(path.read_text())
+    existing = json.loads(path.read_text(encoding="utf-8"))
     existing["sections"] = body.sections.model_dump()
-    path.write_text(json.dumps(existing, ensure_ascii=False, indent=2))
+    path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
     return existing
 
 
@@ -165,3 +176,8 @@ def delete_note(encoded_key: str):
     if path.exists():
         path.unlink()
     return {"deleted": True}
+
+
+# ── static frontend ─────────────────────────────────────────────────────────
+
+app.mount("/", StaticFiles(directory=BASE_DIR / "static", html=True), name="static")
