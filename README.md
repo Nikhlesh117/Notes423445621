@@ -1,6 +1,6 @@
 # Notes
 
-An AI/ML interview-prep study app. Browse a 16-phase roadmap (Python & Math through Forward Deployed Engineer topics) and read structured notes — what it is, why it exists, how it works, when to use/avoid it, what goes wrong, and a real example — for every topic. All notes are pre-written, so it works out of the box with no API key.
+An AI/ML interview-prep study app. Browse a 16-phase roadmap (Python & Math through Forward Deployed Engineer topics) and read structured notes — what it is, why it exists, how it works, when to use/avoid it, what goes wrong, and a real example — for every topic. All notes are pre-written, so it works out of the box with no setup or API key required. You can still manually edit any note's text and save your changes.
 
 Single FastAPI backend serves both the API and the plain HTML/JS/CSS frontend (`backend/static/`) — no build step, no separate frontend server.
 
@@ -23,5 +23,3 @@ Study progress (the status you mark per topic) is saved in your browser's local 
 3. **New → Blueprint** → select this repo → **Apply**.
 
 That's it — Render reads `render.yaml` and deploys automatically. Every future `git push` redeploys it.
-
-`ANTHROPIC_API_KEY` is optional and can be left blank in the Render dashboard — it's only used by the "Generate with AI" button for editing/regenerating a note, which isn't needed since every topic already has a pre-written note.

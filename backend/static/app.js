@@ -22,15 +22,6 @@ async function fetchNote(key) {
   return r.json();
 }
 
-async function generateNote(key) {
-  const r = await fetch(`${BASE}/note/${encodeKey(key)}/generate`, { method: "POST" });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(err.detail || "Generation failed");
-  }
-  return r.json();
-}
-
 async function saveNote(key, sections) {
   const r = await fetch(`${BASE}/note/${encodeKey(key)}`, {
     method: "PUT",
@@ -38,12 +29,6 @@ async function saveNote(key, sections) {
     body: JSON.stringify({ sections }),
   });
   if (!r.ok) throw new Error("Save failed");
-  return r.json();
-}
-
-async function deleteNote(key) {
-  const r = await fetch(`${BASE}/note/${encodeKey(key)}`, { method: "DELETE" });
-  if (!r.ok) throw new Error("Delete failed");
   return r.json();
 }
 
@@ -494,21 +479,6 @@ async function renderNoteView() {
   }
 }
 
-async function handleGenerate() {
-  currentLoading = true;
-  currentError = null;
-  paintNoteView();
-  try {
-    currentNote = await generateNote(selectedKey);
-    currentMode = "read";
-  } catch (e) {
-    currentError = e.message;
-  } finally {
-    currentLoading = false;
-    paintNoteView();
-  }
-}
-
 function handleEdit() {
   currentDraft = { ...currentNote.sections };
   currentMode = "edit";
@@ -528,12 +498,6 @@ async function handleSave() {
     currentLoading = false;
     paintNoteView();
   }
-}
-
-async function handleRegenerate() {
-  if (!window.confirm("Regenerate this note? Your edits will be overwritten.")) return;
-  await deleteNote(selectedKey).catch(() => {});
-  handleGenerate();
 }
 
 async function handleSetStatus(status) {
@@ -602,7 +566,7 @@ function paintNoteView() {
     view.appendChild(
       el("div", { class: "note-loading" }, [
         el("div", { class: "spinner" }),
-        el("span", { text: "Generating note with Claude…" }),
+        el("span", { text: "Loading…" }),
       ])
     );
     mainEl.appendChild(view);
@@ -612,14 +576,13 @@ function paintNoteView() {
   if (currentMode === "empty") {
     view.appendChild(
       el("div", { class: "note-empty-state" }, [
-        el("p", { text: "No note saved for this topic yet." }),
-        el("button", { class: "btn btn-primary", text: "✨ Generate with Claude", onclick: handleGenerate }),
+        el("p", { text: "No note available for this topic yet." }),
       ])
     );
   } else if (currentMode === "read" && currentNote) {
     const metaText = currentNote.model === "pre-written"
       ? "✍️ Pre-written study note"
-      : `Generated ${currentNote.generated_at} · ${currentNote.model}`;
+      : `✏️ Edited ${currentNote.generated_at}`;
     view.appendChild(el("div", { class: "note-meta", text: metaText }));
     const sections = el("div", { class: "sections" });
     for (let i = 0; i < SECTIONS.length; i++) {
@@ -667,7 +630,6 @@ function paintNoteView() {
     view.appendChild(
       el("div", { class: "note-actions" }, [
         el("button", { class: "btn btn-secondary", text: "✏️ Edit", onclick: handleEdit }),
-        el("button", { class: "btn btn-ghost", text: "🔄 Regenerate", onclick: handleRegenerate }),
       ])
     );
   } else if (currentMode === "edit") {

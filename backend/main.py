@@ -1,17 +1,12 @@
 import base64
 import datetime
 import json
-import os
 import pathlib
-import re
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-
-load_dotenv()
 
 BASE_DIR   = pathlib.Path(__file__).parent
 NOTES_DIR  = BASE_DIR / "notes"
@@ -48,23 +43,11 @@ def _build_index(tree: list) -> dict:
 
 TOPICS_INDEX: dict = _build_index(TOPICS_TREE)
 
-_api_key = os.environ.get("ANTHROPIC_API_KEY")
-_client  = None
-
-def get_client():
-    global _client
-    if not _api_key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set — AI generation unavailable")
-    if _client is None:
-        import anthropic
-        _client = anthropic.Anthropic(api_key=_api_key)
-    return _client
-
 app = FastAPI(title="AI/ML Notes API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -77,30 +60,6 @@ def decode_key(encoded: str) -> str:
 
 def note_path(encoded: str) -> pathlib.Path:
     return NOTES_DIR / (encoded + ".json")
-
-def build_prompt(topic: dict) -> str:
-    return f"""You are a technical educator writing structured notes for an AI/ML learning roadmap.
-
-Topic: {topic["item"]}
-Context:
-  Phase {topic["phase"]}: {topic["title"]}
-  Group: {topic["group"]}
-  Subtopic: {topic["subtopic"]}
-
-Write a concise, accurate note for a practitioner who already understands software but is learning AI/ML.
-Return ONLY a JSON object with exactly these seven keys. Do not include markdown fences or any text outside the JSON.
-Where it helps readability, format a value as a bullet list using lines starting with "- ", or a code block fenced
-with triple backticks — these render specially in the UI. Use single backticks for inline code/identifiers.
-
-{{
-  "what_it_is": "1-3 sentence definition in plain English.",
-  "why_it_exists": "The problem it solves or the gap it fills.",
-  "how_it_works": "Intuitive explanation. Avoid heavy math; use analogies and short code examples where helpful.",
-  "use_when": "Bullet list of situations where this is the right choice.",
-  "avoid_when": "Bullet list of situations where you should prefer something else (and what).",
-  "what_goes_wrong": "Bullet list of common pitfalls, failure modes, and gotchas practitioners encounter.",
-  "real_example": "A concrete, specific example from practice or a well-known paper/project."
-}}"""
 
 # ── models ─────────────────────────────────────────────────────────────────
 
@@ -150,61 +109,27 @@ def get_note(encoded_key: str):
     raise HTTPException(status_code=404, detail="Note not found")
 
 
-@app.post("/api/note/{encoded_key}/generate", response_model=NoteResponse)
-def generate_note(encoded_key: str):
-    raw_key = decode_key(encoded_key)
-    topic   = TOPICS_INDEX.get(raw_key)
-    if topic is None:
-        raise HTTPException(status_code=404, detail=f"Unknown topic key: {raw_key!r}")
-
-    try:
-        import anthropic
-        message = get_client().messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2048,
-            messages=[{"role": "user", "content": build_prompt(topic)}],
-        )
-    except anthropic.APIError as e:
-        raise HTTPException(status_code=502, detail=f"Claude API error: {e}")
-
-    raw_text = message.content[0].text.strip()
-
-    try:
-        sections_dict = json.loads(raw_text)
-    except json.JSONDecodeError:
-        m = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", raw_text)
-        if m:
-            sections_dict = json.loads(m.group(1))
-        else:
-            raise HTTPException(status_code=502, detail="Claude returned non-JSON response")
-
-    note = {
-        "key":          raw_key,
-        "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "model":        "claude-sonnet-4-6",
-        "sections":     sections_dict,
-    }
-    note_path(encoded_key).write_text(json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8")
-    return note
-
-
 @app.put("/api/note/{encoded_key}", response_model=NoteResponse)
 def update_note(encoded_key: str, body: NoteUpdateRequest):
-    path = note_path(encoded_key)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Note not found; generate it first")
-    existing = json.loads(path.read_text(encoding="utf-8"))
-    existing["sections"] = body.sections.model_dump()
-    path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-    return existing
-
-
-@app.delete("/api/note/{encoded_key}")
-def delete_note(encoded_key: str):
+    """Save manual edits. Works even the first time a pre-written note is
+    edited — it materializes a `notes/` override seeded from the topic's
+    pre-written content instead of requiring AI generation first."""
     path = note_path(encoded_key)
     if path.exists():
-        path.unlink()
-    return {"deleted": True}
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        existing["sections"] = body.sections.model_dump()
+    else:
+        raw_key = decode_key(encoded_key)
+        if raw_key not in TOPICS_INDEX:
+            raise HTTPException(status_code=404, detail=f"Unknown topic key: {raw_key!r}")
+        existing = {
+            "key":          raw_key,
+            "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "model":        "edited",
+            "sections":     body.sections.model_dump(),
+        }
+    path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    return existing
 
 
 # ── static frontend ─────────────────────────────────────────────────────────
