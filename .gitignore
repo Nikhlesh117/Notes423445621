@@ -3,16 +3,13 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+backend/*.log
 
 # Env
 backend/.env
 
 # Notes (personal data — not committed)
 backend/notes/
-
-# Node
-frontend/node_modules/
-frontend/dist/
 
 # OS
 .DS_Store

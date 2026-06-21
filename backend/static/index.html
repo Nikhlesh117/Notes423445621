@@ -12,22 +12,40 @@
       <div class="app-header-left">
         <span class="app-logo">🧠</span>
         <div>
-          <div class="app-title">AI/ML Notes</div>
+          <div class="app-title">AI/ML Learning Roadmap</div>
           <div class="app-subtitle" id="app-subtitle">Loading…</div>
         </div>
+      </div>
+
+      <div class="app-header-center">
+        <input id="search-input" class="global-search" placeholder="Search all topics…" />
+        <div class="tier-filter" id="tier-filter">
+          <button class="tier-pill active" data-tier="all">All</button>
+          <button class="tier-pill" data-tier="1">T1</button>
+          <button class="tier-pill" data-tier="2">T2</button>
+          <button class="tier-pill" data-tier="3">T3</button>
+        </div>
+      </div>
+
+      <div class="app-header-right">
+        <nav class="view-tabs" id="view-tabs">
+          <button class="view-tab active" data-view="notes">📝 Notes</button>
+          <button class="view-tab" data-view="roadmap">🗺️ Roadmap</button>
+          <button class="view-tab" data-view="dashboard">📊 Progress</button>
+        </nav>
+        <button class="theme-toggle" id="theme-toggle" title="Toggle dark / light mode">🌙</button>
       </div>
     </header>
 
     <div class="app-body">
-      <aside class="app-sidebar">
+      <aside class="app-sidebar" id="app-sidebar">
         <div class="sidebar">
-          <div class="sidebar-search">
-            <input id="search-input" placeholder="Search topics…" />
-          </div>
           <div class="sidebar-tree" id="sidebar-tree"></div>
         </div>
       </aside>
       <main class="app-main" id="app-main"></main>
+      <div class="app-roadmap" id="app-roadmap" hidden></div>
+      <div class="app-dashboard" id="app-dashboard" hidden></div>
     </div>
   </div>
 

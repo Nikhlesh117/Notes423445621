@@ -47,6 +47,42 @@ async function deleteNote(key) {
   return r.json();
 }
 
+// Progress is stored entirely in the browser (localStorage) — no server
+// round-trip, nothing to reset on a restart. Same shape as before: a flat
+// { rawKey: status } map.
+const PROGRESS_STORAGE_KEY = "progress";
+const VALID_STATUSES = new Set(["not_started", "studying", "done"]);
+
+function readProgressStore() {
+  try {
+    return JSON.parse(localStorage.getItem(PROGRESS_STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeProgressStore(progress) {
+  localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+}
+
+async function fetchProgress() {
+  return readProgressStore();
+}
+
+async function setProgress(key, status) {
+  if (!VALID_STATUSES.has(status)) {
+    throw new Error(`status must be one of ${[...VALID_STATUSES].sort()}`);
+  }
+  const progress = readProgressStore();
+  if (status === "not_started") {
+    delete progress[key];
+  } else {
+    progress[key] = status;
+  }
+  writeProgressStore(progress);
+  return progress;
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────
 
 function el(tag, attrs = {}, children = []) {
@@ -77,40 +113,188 @@ const SECTIONS = [
   { key: "what_it_is",      label: "What it is",               icon: "📌" },
   { key: "why_it_exists",   label: "Why it exists",            icon: "💡" },
   { key: "how_it_works",    label: "How it works (intuition)", icon: "⚙️" },
-  { key: "when_to_use",     label: "When to use vs not use",   icon: "🎯" },
+  { key: "use_when",        label: "Use it when",              icon: "✅", tone: "good" },
+  { key: "avoid_when",      label: "Skip it / reach for something else when", icon: "🚫", tone: "bad" },
   { key: "what_goes_wrong", label: "What goes wrong",          icon: "⚠️" },
   { key: "real_example",    label: "Real example",             icon: "🔬" },
 ];
 
+// ── rich text rendering ──────────────────────────────────────────────────
+// Section content is plain text written with light conventions so it reads
+// cleanly as a study note: blank lines separate paragraphs, "- " starts a
+// bullet, ```…``` fences a code block, and `…` marks inline code.
+
+function renderInline(text) {
+  const nodes = [];
+  text.split(/(`[^`]+`)/g).forEach((part) => {
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
+      nodes.push(el("code", { text: part.slice(1, -1) }));
+    } else if (part) {
+      nodes.push(document.createTextNode(part));
+    }
+  });
+  return nodes;
+}
+
+function renderProse(container, text) {
+  text.trim().split(/\n\s*\n/).forEach((block) => {
+    const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    if (lines.every((l) => /^[-•]\s+/.test(l))) {
+      const ul = el("ul", { class: "rich-list" });
+      lines.forEach((l) => ul.appendChild(el("li", {}, renderInline(l.replace(/^[-•]\s+/, "")))));
+      container.appendChild(ul);
+    } else {
+      container.appendChild(el("p", {}, renderInline(lines.join(" "))));
+    }
+  });
+}
+
+function renderRichText(text) {
+  const container = el("div", { class: "rich-text" });
+  if (!text) return container;
+  const raw = text.replace(/\r\n/g, "\n").trim();
+  raw.split(/```([\s\S]*?)```/g).forEach((part, i) => {
+    if (i % 2 === 1) {
+      const lines = part.replace(/^\n/, "").replace(/\n$/, "").split("\n");
+      if (lines.length > 1 && /^[\w+-]{0,16}$/.test(lines[0])) lines.shift();
+      container.appendChild(el("pre", { class: "rich-code" }, [el("code", { text: lines.join("\n") })]));
+    } else if (part.trim()) {
+      renderProse(container, part);
+    }
+  });
+  return container;
+}
+
+const STATUS_LABEL = { not_started: "○ Not started", studying: "◐ Studying", done: "✓ Done" };
+
+// ── progress helpers ─────────────────────────────────────────────────────
+
+function getStatus(key) {
+  return PROGRESS[key] || "not_started";
+}
+
+function collectGroupKeys(phaseNum, group) {
+  const keys = [];
+  group.subtopics.forEach((s) => s.items.forEach((item) => keys.push(`${phaseNum}|${group.name}|${s.name}|${item}`)));
+  return keys;
+}
+
+function collectPhaseKeys(phase) {
+  const keys = [];
+  phase.groups.forEach((g) => keys.push(...collectGroupKeys(phase.phase, g)));
+  return keys;
+}
+
+function summarize(keys) {
+  let done = 0, studying = 0;
+  keys.forEach((k) => {
+    const st = getStatus(k);
+    if (st === "done") done++;
+    else if (st === "studying") studying++;
+  });
+  const total = keys.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return { total, done, studying, notStarted: total - done - studying, pct };
+}
+
+// ── theme ────────────────────────────────────────────────────────────────
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  themeToggleBtn.textContent = theme === "light" ? "☀️" : "🌙";
+  localStorage.setItem("theme", theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  applyTheme(current === "light" ? "dark" : "light");
+}
+
 // ── app state ────────────────────────────────────────────────────────────
 
 let TREE = [];
+let PROGRESS = {};
 let selectedKey = null;
 let searchQuery = "";
+let currentView = "notes";   // "notes" | "roadmap" | "dashboard"
+let currentTier = "all";     // "all" | "1" | "2" | "3"
 
-const subtitleEl   = document.getElementById("app-subtitle");
-const treeEl       = document.getElementById("sidebar-tree");
-const searchInput  = document.getElementById("search-input");
-const mainEl       = document.getElementById("app-main");
+const subtitleEl     = document.getElementById("app-subtitle");
+const sidebarEl      = document.getElementById("app-sidebar");
+const treeEl         = document.getElementById("sidebar-tree");
+const searchInput    = document.getElementById("search-input");
+const tierFilterEl   = document.getElementById("tier-filter");
+const viewTabsEl     = document.getElementById("view-tabs");
+const themeToggleBtn = document.getElementById("theme-toggle");
+const mainEl         = document.getElementById("app-main");
+const roadmapEl      = document.getElementById("app-roadmap");
+const dashboardEl    = document.getElementById("app-dashboard");
+
+// Sidebar nodes are rebuilt from scratch on every render (selection, status
+// change, search…). Track which ones are expanded externally so rebuilds
+// don't collapse the tree the user has open.
+const openPhases    = new Set();
+const openGroups    = new Set();
+const openSubtopics = new Set();
+
+applyTheme(localStorage.getItem("theme") || "dark");
+
+themeToggleBtn.addEventListener("click", toggleTheme);
 
 searchInput.addEventListener("input", (e) => {
   searchQuery = e.target.value;
-  renderSidebar();
+  rerenderCurrentView();
 });
+
+tierFilterEl.querySelectorAll(".tier-pill").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    currentTier = btn.dataset.tier;
+    tierFilterEl.querySelectorAll(".tier-pill").forEach((b) => b.classList.toggle("active", b === btn));
+    rerenderCurrentView();
+  });
+});
+
+viewTabsEl.querySelectorAll(".view-tab").forEach((btn) => {
+  btn.addEventListener("click", () => switchView(btn.dataset.view));
+});
+
+function switchView(view) {
+  currentView = view;
+  viewTabsEl.querySelectorAll(".view-tab").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  sidebarEl.hidden   = view !== "notes";
+  mainEl.hidden      = view !== "notes";
+  roadmapEl.hidden   = view !== "roadmap";
+  dashboardEl.hidden = view !== "dashboard";
+  rerenderCurrentView();
+}
+
+function rerenderCurrentView() {
+  if (currentView === "notes") { renderSidebar(); renderNoteView(); }
+  else if (currentView === "roadmap") { renderRoadmap(); }
+  else if (currentView === "dashboard") { renderDashboard(); }
+}
+
+function updateSubtitle() {
+  const allKeys = [];
+  TREE.forEach((ph) => allKeys.push(...collectPhaseKeys(ph)));
+  const { total, done, studying, pct } = summarize(allKeys);
+  subtitleEl.textContent = `${total.toLocaleString()} topics · ${done} done · ${studying} studying · ${pct}% complete`;
+}
 
 // ── sidebar ──────────────────────────────────────────────────────────────
 
-function filterTree(tree, q) {
-  if (!q.trim()) return tree;
-  const needle = q.toLowerCase();
+function filterTree(tree, q, tier) {
+  const needle = q.trim().toLowerCase();
   return tree
     .map((ph) => ({
       ...ph,
       groups: ph.groups
+        .filter((g) => tier === "all" || String(g.tier) === String(tier))
         .map((g) => ({
           ...g,
           subtopics: g.subtopics
-            .map((s) => ({ ...s, items: s.items.filter((it) => it.toLowerCase().includes(needle)) }))
+            .map((s) => ({ ...s, items: needle ? s.items.filter((it) => it.toLowerCase().includes(needle)) : s.items }))
             .filter((s) => s.items.length > 0),
         }))
         .filter((g) => g.subtopics.length > 0),
@@ -119,15 +303,16 @@ function filterTree(tree, q) {
 }
 
 function renderSidebar() {
-  const filtered = filterTree(TREE, searchQuery);
-  const autoOpen = !!searchQuery.trim();
+  const filtered = filterTree(TREE, searchQuery, currentTier);
+  const autoOpen = !!searchQuery.trim() || currentTier !== "all";
 
   treeEl.innerHTML = "";
   filtered.forEach((phase) => treeEl.appendChild(renderPhaseNode(phase, autoOpen)));
 }
 
 function renderPhaseNode(phase, autoOpen) {
-  let open = autoOpen;
+  const id = `${phase.phase}`;
+  let open = autoOpen || openPhases.has(id);
   const wrapper = el("div", { class: "phase-node" });
   const body = el("div");
 
@@ -138,6 +323,7 @@ function renderPhaseNode(phase, autoOpen) {
       style: `border-left: 4px solid ${phase.color}`,
       onclick: () => {
         open = !open;
+        if (open) openPhases.add(id); else openPhases.delete(id);
         rebuild();
       },
     },
@@ -168,7 +354,8 @@ function renderPhaseNode(phase, autoOpen) {
 }
 
 function renderGroupNode(group, phaseNum, phaseColor, autoOpen) {
-  let open = autoOpen;
+  const id = `${phaseNum}|${group.name}`;
+  let open = autoOpen || openGroups.has(id);
   const wrapper = el("div", { class: "group-node" });
   const body = el("div");
 
@@ -178,6 +365,7 @@ function renderGroupNode(group, phaseNum, phaseColor, autoOpen) {
       class: "group-header",
       onclick: () => {
         open = !open;
+        if (open) openGroups.add(id); else openGroups.delete(id);
         rebuild();
       },
     },
@@ -209,7 +397,8 @@ function renderGroupNode(group, phaseNum, phaseColor, autoOpen) {
 }
 
 function renderSubtopicNode(subtopic, phaseNum, groupName, phaseColor, autoOpen) {
-  let open = autoOpen;
+  const id = `${phaseNum}|${groupName}|${subtopic.name}`;
+  let open = autoOpen || openSubtopics.has(id);
   const wrapper = el("div", { class: "subtopic-node" });
   const body = el("div");
 
@@ -219,6 +408,7 @@ function renderSubtopicNode(subtopic, phaseNum, groupName, phaseColor, autoOpen)
       class: "subtopic-header",
       onclick: () => {
         open = !open;
+        if (open) openSubtopics.add(id); else openSubtopics.delete(id);
         rebuild();
       },
     },
@@ -235,12 +425,19 @@ function renderSubtopicNode(subtopic, phaseNum, groupName, phaseColor, autoOpen)
       subtopic.items.forEach((item) => {
         const key = `${phaseNum}|${groupName}|${subtopic.name}|${item}`;
         const active = key === selectedKey;
-        const leaf = el("div", {
-          class: `item-leaf ${active ? "active" : ""}`,
-          style: active ? `border-left: 3px solid ${phaseColor}` : "",
-          text: item,
-          onclick: () => selectTopic(key),
-        });
+        const status = getStatus(key);
+        const leaf = el(
+          "div",
+          {
+            class: `item-leaf ${active ? "active" : ""}`,
+            style: active ? `border-left: 3px solid ${phaseColor}` : "",
+            onclick: () => selectTopic(key),
+          },
+          [
+            el("span", { class: `status-dot ${status === "not_started" ? "" : status}`.trim() }),
+            el("span", { class: "item-leaf-text", text: item }),
+          ]
+        );
         body.appendChild(leaf);
       });
     }
@@ -339,6 +536,33 @@ async function handleRegenerate() {
   handleGenerate();
 }
 
+async function handleSetStatus(status) {
+  if (getStatus(selectedKey) === status) return;
+  try {
+    PROGRESS = await setProgress(selectedKey, status);
+  } catch (e) {
+    currentError = e.message;
+  }
+  updateSubtitle();
+  paintNoteView();
+  renderSidebar();
+}
+
+function buildStatusPicker() {
+  return el(
+    "div",
+    { class: "status-picker" },
+    ["not_started", "studying", "done"].map((status) =>
+      el("button", {
+        class: `status-btn ${getStatus(selectedKey) === status ? "active" : ""}`,
+        "data-status": status,
+        text: STATUS_LABEL[status],
+        onclick: () => handleSetStatus(status),
+      })
+    )
+  );
+}
+
 function paintNoteView() {
   mainEl.innerHTML = "";
 
@@ -361,6 +585,8 @@ function paintNoteView() {
       el("div", { class: "note-breadcrumb", text: selectedKey.split("|").slice(0, -1).join(" › ") }),
     ])
   );
+
+  view.appendChild(buildStatusPicker());
 
   if (currentError) {
     const errBox = el("div", { class: "note-error" }, [
@@ -391,21 +617,52 @@ function paintNoteView() {
       ])
     );
   } else if (currentMode === "read" && currentNote) {
-    view.appendChild(
-      el("div", { class: "note-meta", text: `Generated ${currentNote.generated_at} · ${currentNote.model}` })
-    );
+    const metaText = currentNote.model === "pre-written"
+      ? "✍️ Pre-written study note"
+      : `Generated ${currentNote.generated_at} · ${currentNote.model}`;
+    view.appendChild(el("div", { class: "note-meta", text: metaText }));
     const sections = el("div", { class: "sections" });
-    SECTIONS.forEach(({ key, label, icon }) => {
+    for (let i = 0; i < SECTIONS.length; i++) {
+      const s = SECTIONS[i];
+      const next = SECTIONS[i + 1];
+      if (s.tone === "good" && next && next.tone === "bad") {
+        sections.appendChild(
+          el("div", { class: "section when-section" }, [
+            el("div", { class: "section-heading" }, [
+              el("span", { class: "section-icon", text: "🎯" }),
+              el("span", { class: "section-label", text: "When to use it — and when not to" }),
+            ]),
+            el("div", { class: "when-grid" }, [
+              el("div", { class: "when-block when-good" }, [
+                el("div", { class: "when-block-head" }, [
+                  el("span", { class: "when-block-icon", text: s.icon }),
+                  el("span", { text: s.label }),
+                ]),
+                renderRichText(currentNote.sections[s.key]),
+              ]),
+              el("div", { class: "when-block when-bad" }, [
+                el("div", { class: "when-block-head" }, [
+                  el("span", { class: "when-block-icon", text: next.icon }),
+                  el("span", { text: next.label }),
+                ]),
+                renderRichText(currentNote.sections[next.key]),
+              ]),
+            ]),
+          ])
+        );
+        i++; // consumed the pair
+        continue;
+      }
       sections.appendChild(
         el("div", { class: "section" }, [
           el("div", { class: "section-heading" }, [
-            el("span", { class: "section-icon", text: icon }),
-            el("span", { class: "section-label", text: label }),
+            el("span", { class: "section-icon", text: s.icon }),
+            el("span", { class: "section-label", text: s.label }),
           ]),
-          el("div", { class: "section-body", text: currentNote.sections[key] }),
+          el("div", { class: "section-body" }, [renderRichText(currentNote.sections[s.key])]),
         ])
       );
-    });
+    }
     view.appendChild(sections);
     view.appendChild(
       el("div", { class: "note-actions" }, [
@@ -441,12 +698,164 @@ function paintNoteView() {
   mainEl.appendChild(view);
 }
 
+// ── roadmap view ─────────────────────────────────────────────────────────
+
+function renderRoadmap() {
+  const filtered = filterTree(TREE, searchQuery, currentTier);
+  roadmapEl.innerHTML = "";
+  const list = el("div", { class: "roadmap-list" });
+  filtered.forEach((phase) => list.appendChild(renderPhaseCard(phase)));
+  roadmapEl.appendChild(list);
+}
+
+function renderPhaseCard(phase) {
+  let open = false;
+  const card = el("div", { class: "phase-card" });
+  const body = el("div", { class: "phase-card-body" });
+  body.style.display = "none";
+
+  const keys = collectPhaseKeys(phase);
+  const { total, done, studying, pct } = summarize(keys);
+  const tierCounts = {};
+  phase.groups.forEach((g) => { tierCounts[g.tier] = (tierCounts[g.tier] || 0) + 1; });
+
+  const ring = el("div", { class: "progress-ring" }, [
+    el("div", { class: "progress-ring-hole" }),
+    el("span", { class: "progress-ring-pct", text: `${pct}%` }),
+  ]);
+  ring.style.background = `conic-gradient(${phase.color} ${pct}%, var(--surface2) 0)`;
+
+  const header = el(
+    "div",
+    { class: "phase-card-header", onclick: () => { open = !open; rebuild(); } },
+    [
+      el("span", { class: "phase-card-emoji", text: phase.emoji }),
+      el("div", { class: "phase-card-info" }, [
+        el("div", { class: "phase-card-title", text: `Phase ${phase.phase}: ${phase.title}` }),
+        el("div", { class: "phase-card-meta" }, [
+          el("span", { text: phase.duration || "" }),
+          el("span", { text: `${phase.groups.length} groups · ${total} items` }),
+          el("span", { text: `${done} done · ${studying} studying` }),
+          el(
+            "span",
+            { class: "phase-card-tiers" },
+            [1, 2, 3].filter((t) => tierCounts[t]).map((t) =>
+              el("span", {
+                class: "tier-badge",
+                style: `color: ${TIER_COLOR[t]}; border-color: ${TIER_COLOR[t]}`,
+                text: `${TIER_LABEL[t]}×${tierCounts[t]}`,
+              })
+            )
+          ),
+        ]),
+      ]),
+      ring,
+      el("span", { class: "phase-card-chevron", text: open ? "▾" : "▸" }),
+    ]
+  );
+
+  function rebuild() {
+    card.classList.toggle("expanded", open);
+    header.querySelector(".phase-card-chevron").textContent = open ? "▾" : "▸";
+    body.style.display = open ? "block" : "none";
+    body.innerHTML = "";
+    if (open) {
+      phase.groups.forEach((g) => body.appendChild(renderRoadmapGroupRow(phase, g)));
+    }
+  }
+  rebuild();
+
+  card.appendChild(header);
+  card.appendChild(body);
+  return card;
+}
+
+function renderRoadmapGroupRow(phase, group) {
+  const keys = collectGroupKeys(phase.phase, group);
+  const { total, done, pct } = summarize(keys);
+  return el("div", { class: "roadmap-group-row" }, [
+    el("span", { class: "roadmap-group-name" }, [
+      el("span", {
+        class: "tier-badge",
+        style: `color: ${TIER_COLOR[group.tier]}; border-color: ${TIER_COLOR[group.tier]}`,
+        text: TIER_LABEL[group.tier],
+      }),
+      el("span", { class: "gname", text: group.name }),
+    ]),
+    el("span", { class: "roadmap-group-count", text: `${done}/${total}` }),
+    el("div", { class: "roadmap-group-bar" }, [
+      el("div", { class: "roadmap-group-bar-fill", style: `width: ${pct}%` }),
+    ]),
+  ]);
+}
+
+// ── dashboard / progress view ────────────────────────────────────────────
+
+function renderDashboard() {
+  const filtered = filterTree(TREE, searchQuery, currentTier);
+  const allKeys = [];
+  filtered.forEach((ph) => allKeys.push(...collectPhaseKeys(ph)));
+  const { total, done, studying, pct } = summarize(allKeys);
+
+  dashboardEl.innerHTML = "";
+
+  dashboardEl.appendChild(
+    el("div", { class: "dashboard-stats" }, [
+      el("div", { class: "stat-card" }, [
+        el("div", { class: "stat-card-value", text: total.toLocaleString() }),
+        el("div", { class: "stat-card-label", text: "Total topics" }),
+      ]),
+      el("div", { class: "stat-card done" }, [
+        el("div", { class: "stat-card-value", text: done.toLocaleString() }),
+        el("div", { class: "stat-card-label", text: "Done" }),
+      ]),
+      el("div", { class: "stat-card studying" }, [
+        el("div", { class: "stat-card-value", text: studying.toLocaleString() }),
+        el("div", { class: "stat-card-label", text: "Studying" }),
+      ]),
+      el("div", { class: "stat-card complete" }, [
+        el("div", { class: "stat-card-value", text: `${pct}%` }),
+        el("div", { class: "stat-card-label", text: "Complete" }),
+      ]),
+    ])
+  );
+
+  const list = el("div", { class: "dashboard-list" });
+  filtered.forEach((phase) => {
+    const s = summarize(collectPhaseKeys(phase));
+    const row = el("div", { class: "dashboard-row" });
+    row.style.borderLeftColor = phase.color;
+    row.appendChild(
+      el("div", { class: "dashboard-row-top" }, [
+        el("span", { class: "dashboard-row-emoji", text: phase.emoji }),
+        el("span", { class: "dashboard-row-title", text: `Phase ${phase.phase}: ${phase.title}` }),
+        el("span", { class: "dashboard-row-frac", text: `${s.done}/${s.total}` }),
+        el("span", { class: "dashboard-row-pct", text: `${s.pct}%` }),
+      ])
+    );
+    row.appendChild(
+      el("div", { class: "progress-bar" }, [
+        el("div", { class: "progress-bar-fill", style: `width: ${s.pct}%; background: ${phase.color}` }),
+      ])
+    );
+    row.appendChild(
+      el("div", {
+        class: "dashboard-row-meta",
+        text: `${phase.groups.length} groups · ${s.studying} studying · ${s.notStarted} not started`,
+      })
+    );
+    list.appendChild(row);
+  });
+  dashboardEl.appendChild(list);
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────
 
-fetchTopics()
-  .then((tree) => {
+Promise.all([fetchTopics(), fetchProgress().catch(() => ({}))])
+  .then(([tree, progress]) => {
     TREE = tree;
-    subtitleEl.textContent = `${countTopics(tree).toLocaleString()} topics across ${tree.length} phases`;
+    PROGRESS = progress;
+    updateSubtitle();
     renderSidebar();
     renderNoteView();
   })
