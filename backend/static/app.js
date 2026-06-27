@@ -1026,6 +1026,12 @@ function renderLanding() {
   landingEl.appendChild(root);
 }
 
+// ── PWA install support (lets Android/Chrome treat this as an installable app) ──
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────
 
 Promise.all([fetchTopics(), fetchProgress().catch(() => ({}))])

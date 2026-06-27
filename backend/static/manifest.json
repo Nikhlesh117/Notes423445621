@@ -1,0 +1,16 @@
+{
+  "name": "NeuroPath — AI/ML Mastery Roadmap",
+  "short_name": "NeuroPath",
+  "description": "A structured, self-paced AI/ML interview-prep roadmap with study notes for every topic.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#080B17",
+  "theme_color": "#6366F1",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
