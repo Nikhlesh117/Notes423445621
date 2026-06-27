@@ -220,6 +220,9 @@ function summarize(keys) {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   themeToggleBtn.textContent = theme === "light" ? "☀️" : "🌙";
+  // Keep the installed-app status bar in sync with the in-app theme.
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#EDF1FA" : "#0B1020");
   localStorage.setItem("theme", theme);
 }
 

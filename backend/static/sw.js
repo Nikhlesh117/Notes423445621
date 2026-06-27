@@ -1,4 +1,4 @@
-const CACHE = "neuropath-shell-v1";
+const CACHE = "neuropath-shell-v2";
 const SHELL = ["/", "/style.css", "/app.js", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -13,17 +13,19 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-// Network-first for API calls (always want fresh data), cache-first for the app shell.
+// Network-first for everything same-origin: the installed app always reflects
+// the latest deploy, and falls back to the cached shell only when offline.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
 
-  if (url.pathname.startsWith("/api/")) {
-    e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
-    return;
-  }
-
   e.respondWith(
-    caches.match(e.request).then((cached) => cached || fetch(e.request))
+    fetch(e.request)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });

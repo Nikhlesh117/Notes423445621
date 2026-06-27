@@ -118,7 +118,7 @@ body::before {
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   border-bottom: 1px solid var(--border-soft);
-  padding: 11px 22px;
+  padding: calc(11px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) 11px calc(22px + env(safe-area-inset-left));
   display: flex;
   align-items: center;
   gap: 20px;
@@ -689,7 +689,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 
 @media (max-width: 860px) {
   .menu-toggle { display: flex; }
-  .app-header { flex-wrap: wrap; justify-content: space-between; gap: 10px 12px; padding: 10px 14px; }
+  .app-header { flex-wrap: wrap; justify-content: space-between; gap: 10px 12px; padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left)); }
   .app-header-left  { order: 1; }
   .app-header-right { order: 2; }
   .app-header-center { order: 3; flex: 1 1 100%; flex-wrap: wrap; gap: 8px; }
