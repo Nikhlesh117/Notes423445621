@@ -94,6 +94,38 @@ function countTopics(tree) {
 const TIER_LABEL = { 1: "T1", 2: "T2", 3: "T3" };
 const TIER_COLOR = { 1: "#DC2626", 2: "#D97706", 3: "#6B7280" };
 
+// A vibrant spectrum so each phase reads as a distinct step on the journey
+// (the source data colours nearly every phase the same blue). Applied to the
+// tree at load time, so the sidebar, roadmap and dashboard all pick it up.
+const PHASE_PALETTE = [
+  "#3B82F6", "#6366F1", "#8B5CF6", "#A855F7", "#D946EF", "#EC4899",
+  "#F43F5E", "#F97316", "#F59E0B", "#EAB308", "#84CC16", "#22C55E",
+  "#10B981", "#14B8A6", "#06B6D4", "#7C3AED",
+];
+function applyPhaseColors(tree) {
+  tree.forEach((ph, i) => { ph.color = PHASE_PALETTE[i % PHASE_PALETTE.length]; });
+}
+
+// Short, human descriptions per phase for the landing page + roadmap.
+const PHASE_TAGLINE = {
+  1:  "The bedrock — Python fluency plus the linear algebra, calculus, probability and statistics everything else stands on.",
+  2:  "Regression, trees, SVMs and ensembles — the models that still win on real-world tabular data.",
+  3:  "Neural nets from the ground up: CNNs, RNNs, LSTMs and your first generative models.",
+  4:  "From tokenization to attention — how machines read, embed and retrieve human language.",
+  5:  "Prompting, fine-tuning, RAG and agents — building real products on large language models.",
+  6:  "Detection, segmentation and document OCR — making sense of the world from pixels.",
+  7:  "Ship it: pipelines, serving, monitoring and deploying models that survive production.",
+  8:  "Nodes, topics and control with ROS2 — bringing intelligence into the physical world.",
+  9:  "Agents that learn by doing — policies, value functions, rewards and exploration.",
+  10: "Learning on networks — graph neural nets, embeddings and relational data.",
+  11: "The cutting-edge corners and techniques that set senior practitioners apart.",
+  12: "Turning raw data into insight, experiments and decisions people act on.",
+  13: "Pipelines, warehouses and streams — the plumbing that feeds every model.",
+  14: "Enterprise-grade engineering on the C# / .NET stack.",
+  15: "Clean code, design patterns and system design — the craft of building software.",
+  16: "The capstone — deploy AI with customers, in the field, end to end as an FDE.",
+};
+
 const SECTIONS = [
   { key: "what_it_is",      label: "What it is",               icon: "📌" },
   { key: "why_it_exists",   label: "Why it exists",            icon: "💡" },
@@ -202,11 +234,13 @@ let TREE = [];
 let PROGRESS = {};
 let selectedKey = null;
 let searchQuery = "";
-let currentView = "notes";   // "notes" | "roadmap" | "dashboard"
+let currentView = "landing"; // "landing" | "notes" | "roadmap" | "dashboard"
 let currentTier = "all";     // "all" | "1" | "2" | "3"
 
 const subtitleEl     = document.getElementById("app-subtitle");
 const sidebarEl      = document.getElementById("app-sidebar");
+const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+const menuToggleBtn  = document.getElementById("menu-toggle");
 const treeEl         = document.getElementById("sidebar-tree");
 const searchInput    = document.getElementById("search-input");
 const tierFilterEl   = document.getElementById("tier-filter");
@@ -215,6 +249,8 @@ const themeToggleBtn = document.getElementById("theme-toggle");
 const mainEl         = document.getElementById("app-main");
 const roadmapEl      = document.getElementById("app-roadmap");
 const dashboardEl    = document.getElementById("app-dashboard");
+const landingEl      = document.getElementById("app-landing");
+const brandBtn       = document.getElementById("brand");
 
 // Sidebar nodes are rebuilt from scratch on every render (selection, status
 // change, search…). Track which ones are expanded externally so rebuilds
@@ -226,6 +262,28 @@ const openSubtopics = new Set();
 applyTheme(localStorage.getItem("theme") || "dark");
 
 themeToggleBtn.addEventListener("click", toggleTheme);
+
+// ── mobile sidebar drawer ────────────────────────────────────────────────
+// On desktop the sidebar is always part of the layout and these classes
+// have no visual effect; on narrow screens (see style.css) they slide it
+// in/out as an overlay.
+function openSidebarDrawer() {
+  sidebarEl.classList.add("open");
+  sidebarBackdrop.classList.add("open");
+}
+function closeSidebarDrawer() {
+  sidebarEl.classList.remove("open");
+  sidebarBackdrop.classList.remove("open");
+}
+function toggleSidebarDrawer() {
+  sidebarEl.classList.contains("open") ? closeSidebarDrawer() : openSidebarDrawer();
+}
+
+menuToggleBtn.addEventListener("click", toggleSidebarDrawer);
+sidebarBackdrop.addEventListener("click", closeSidebarDrawer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeSidebarDrawer();
+});
 
 searchInput.addEventListener("input", (e) => {
   searchQuery = e.target.value;
@@ -251,14 +309,21 @@ function switchView(view) {
   mainEl.hidden      = view !== "notes";
   roadmapEl.hidden   = view !== "roadmap";
   dashboardEl.hidden = view !== "dashboard";
+  landingEl.hidden   = view !== "landing";
+  closeSidebarDrawer();
   rerenderCurrentView();
+  // jump scroll back to top when changing views
+  [landingEl, mainEl, roadmapEl, dashboardEl].forEach((e) => { if (!e.hidden) e.scrollTop = 0; });
 }
 
 function rerenderCurrentView() {
-  if (currentView === "notes") { renderSidebar(); renderNoteView(); }
+  if (currentView === "landing") { renderLanding(); }
+  else if (currentView === "notes") { renderSidebar(); renderNoteView(); }
   else if (currentView === "roadmap") { renderRoadmap(); }
   else if (currentView === "dashboard") { renderDashboard(); }
 }
+
+brandBtn.addEventListener("click", () => switchView("landing"));
 
 function updateSubtitle() {
   const allKeys = [];
@@ -301,11 +366,13 @@ function renderPhaseNode(phase, autoOpen) {
   const wrapper = el("div", { class: "phase-node" });
   const body = el("div");
 
+  const { total, pct } = summarize(collectPhaseKeys(phase));
+
   const header = el(
     "div",
     {
       class: "phase-header",
-      style: `border-left: 4px solid ${phase.color}`,
+      style: `--c:${phase.color}`,
       onclick: () => {
         open = !open;
         if (open) openPhases.add(id); else openPhases.delete(id);
@@ -314,21 +381,25 @@ function renderPhaseNode(phase, autoOpen) {
     },
     [
       el("span", { class: "phase-emoji", text: phase.emoji }),
-      el("span", { class: "phase-title", text: `Phase ${phase.phase}: ${phase.title}` }),
+      el("div", { class: "phase-head-main" }, [
+        el("div", { class: "phase-title", text: `Phase ${phase.phase}: ${phase.title}` }),
+        el("div", { class: "phase-mini", text: `${total} topics · ${pct}% done` }),
+      ]),
       el("span", { class: "chevron", text: open ? "▾" : "▸" }),
+      el("div", { class: "phase-bar" }, [
+        el("div", { class: "phase-bar-fill", style: `width:${pct}%; background:${phase.color}` }),
+      ]),
     ]
   );
 
   function rebuild() {
+    wrapper.classList.toggle("open", open || autoOpen);
     header.querySelector(".chevron").textContent = open ? "▾" : "▸";
     body.innerHTML = "";
     if (open || autoOpen) {
-      const isOpen = open || autoOpen;
-      if (isOpen) {
-        phase.groups.forEach((g) =>
-          body.appendChild(renderGroupNode(g, phase.phase, phase.color, autoOpen))
-        );
-      }
+      phase.groups.forEach((g) =>
+        body.appendChild(renderGroupNode(g, phase.phase, phase.color, autoOpen))
+      );
     }
   }
   rebuild();
@@ -438,6 +509,7 @@ function selectTopic(key) {
   selectedKey = key;
   renderSidebar();
   renderNoteView();
+  closeSidebarDrawer(); // no-op on desktop; closes the mobile drawer
 }
 
 // ── note view ────────────────────────────────────────────────────────────
@@ -665,14 +737,24 @@ function paintNoteView() {
 function renderRoadmap() {
   const filtered = filterTree(TREE, searchQuery, currentTier);
   roadmapEl.innerHTML = "";
+  roadmapEl.appendChild(
+    el("div", { class: "roadmap-head" }, [
+      el("h1", { text: "Your learning roadmap" }),
+      el("p", { text: "Sixteen phases from fundamentals to Forward Deployed Engineer — click any phase to expand its groups and track your progress." }),
+    ])
+  );
   const list = el("div", { class: "roadmap-list" });
-  filtered.forEach((phase) => list.appendChild(renderPhaseCard(phase)));
+  if (filtered.length) {
+    filtered.forEach((phase) => list.appendChild(renderPhaseCard(phase)));
+  } else {
+    list.appendChild(el("div", { class: "tree-error", text: "No phases match your search or tier filter." }));
+  }
   roadmapEl.appendChild(list);
 }
 
 function renderPhaseCard(phase) {
   let open = false;
-  const card = el("div", { class: "phase-card" });
+  const card = el("div", { class: "phase-card", style: `--c:${phase.color}` });
   const body = el("div", { class: "phase-card-body" });
   body.style.display = "none";
 
@@ -695,7 +777,7 @@ function renderPhaseCard(phase) {
       el("div", { class: "phase-card-info" }, [
         el("div", { class: "phase-card-title", text: `Phase ${phase.phase}: ${phase.title}` }),
         el("div", { class: "phase-card-meta" }, [
-          el("span", { text: phase.duration || "" }),
+          phase.duration ? el("span", { class: "pcm-dur", text: `⏱ ${phase.duration}` }) : null,
           el("span", { text: `${phase.groups.length} groups · ${total} items` }),
           el("span", { text: `${done} done · ${studying} studying` }),
           el(
@@ -710,6 +792,9 @@ function renderPhaseCard(phase) {
             )
           ),
         ]),
+        PHASE_TAGLINE[phase.phase]
+          ? el("div", { class: "phase-card-tagline", text: PHASE_TAGLINE[phase.phase] })
+          : null,
       ]),
       ring,
       el("span", { class: "phase-card-chevron", text: open ? "▾" : "▸" }),
@@ -735,7 +820,7 @@ function renderPhaseCard(phase) {
 function renderRoadmapGroupRow(phase, group) {
   const keys = collectGroupKeys(phase.phase, group);
   const { total, done, pct } = summarize(keys);
-  return el("div", { class: "roadmap-group-row" }, [
+  return el("div", { class: "roadmap-group-row", style: `--c:${phase.color}` }, [
     el("span", { class: "roadmap-group-name" }, [
       el("span", {
         class: "tier-badge",
@@ -811,18 +896,150 @@ function renderDashboard() {
   dashboardEl.appendChild(list);
 }
 
+// ── landing / home ─────────────────────────────────────────────────────────
+
+function heroStat(num, lbl) {
+  return el("div", { class: "hero-stat" }, [
+    el("div", { class: "hero-stat-num", text: num }),
+    el("div", { class: "hero-stat-lbl", text: lbl }),
+  ]);
+}
+
+function renderPathCard(phase) {
+  const { total, pct } = summarize(collectPhaseKeys(phase));
+  return el(
+    "div",
+    { class: "path-card", style: `--c:${phase.color}`, onclick: () => switchView("roadmap") },
+    [
+      el("div", { class: "path-card-top" }, [
+        el("span", { class: "path-num", text: String(phase.phase) }),
+        el("span", { class: "path-emoji", text: phase.emoji }),
+        el("span", { class: "path-title", text: phase.title }),
+      ]),
+      el("div", { class: "path-tagline", text: PHASE_TAGLINE[phase.phase] || "" }),
+      el("div", { class: "path-foot" }, [
+        el("div", { class: "path-mini-bar" }, [
+          el("div", { class: "path-mini-fill", style: `width:${pct}%; background:${phase.color}` }),
+        ]),
+        el("span", { class: "path-count", text: `${total} topics` }),
+      ]),
+    ]
+  );
+}
+
+function renderLanding() {
+  const allKeys = [];
+  TREE.forEach((ph) => allKeys.push(...collectPhaseKeys(ph)));
+  const { total, done, pct } = summarize(allKeys);
+
+  landingEl.innerHTML = "";
+  const root = el("div", { class: "landing" });
+
+  // Hero
+  root.appendChild(
+    el("section", { class: "hero" }, [
+      el("div", { class: "hero-glow" }),
+      el("div", { class: "hero-badge" }, [
+        el("span", { class: "dot" }),
+        el("span", { text: "AI / ML Mastery Path" }),
+      ]),
+      el("h1", { class: "hero-title" }, [
+        document.createTextNode("Go from "),
+        el("span", { class: "grad-text", text: "fundamentals" }),
+        document.createTextNode(" to "),
+        el("span", { class: "grad-text", text: "Forward Deployed Engineer" }),
+      ]),
+      el("p", {
+        class: "hero-sub",
+        text:
+          `A structured ${total.toLocaleString()}-topic roadmap across 16 phases. Every concept ` +
+          `comes with a clear study note — what it is, why it exists, how it works, and when to ` +
+          `use it. Track what you've learned and study at your own pace.`,
+      }),
+      el("div", { class: "hero-cta" }, [
+        el("button", { class: "btn btn-primary btn-lg", text: "🚀 Start learning", onclick: () => switchView("notes") }),
+        el("button", { class: "btn btn-secondary btn-lg", text: "🗺️ Explore the roadmap", onclick: () => switchView("roadmap") }),
+      ]),
+      el("div", { class: "hero-stats" }, [
+        heroStat("16", "Phases"),
+        heroStat(total.toLocaleString(), "Topics"),
+        heroStat(`${pct}%`, "Complete"),
+        heroStat(done.toLocaleString(), "Done"),
+      ]),
+    ])
+  );
+
+  // The path
+  const pathGrid = el("div", { class: "path-grid" });
+  TREE.forEach((phase) => pathGrid.appendChild(renderPathCard(phase)));
+  root.appendChild(
+    el("section", { class: "landing-section" }, [
+      el("div", { class: "landing-eyebrow", text: "The journey" }),
+      el("h2", { class: "landing-h2", text: "Your learning path" }),
+      el("p", { class: "landing-p", text: "Sixteen phases, each building on the last — from Python and math all the way to deploying AI in the field." }),
+      pathGrid,
+    ])
+  );
+
+  // Features
+  const features = [
+    ["🧩", "Six-section notes", "Every topic is explained the same way — what it is, why it exists, how it works, when to use it, what goes wrong, and a real example."],
+    ["📈", "Track your progress", "Mark topics as studying or done. Your progress is saved right in your browser — nothing to set up, nothing to lose."],
+    ["🎯", "Career-focused", "Sequenced toward real ML and Forward Deployed Engineer roles, so you always know what to learn next."],
+    ["✏️", "Make it yours", "Edit any note and save your own understanding, in your own words."],
+  ];
+  const featGrid = el("div", { class: "feature-grid" });
+  features.forEach(([icon, title, text]) =>
+    featGrid.appendChild(
+      el("div", { class: "feature-card" }, [
+        el("div", { class: "feature-icon", text: icon }),
+        el("div", { class: "feature-title", text: title }),
+        el("div", { class: "feature-text", text: text }),
+      ])
+    )
+  );
+  root.appendChild(
+    el("section", { class: "landing-section" }, [
+      el("div", { class: "landing-eyebrow", text: "Why it works" }),
+      el("h2", { class: "landing-h2", text: "Built to make it stick" }),
+      featGrid,
+    ])
+  );
+
+  // CTA band
+  root.appendChild(
+    el("div", { class: "landing-cta-band" }, [
+      el("h2", { text: pct > 0 ? `You're ${pct}% of the way there` : "Ready to start?" }),
+      el("p", { text: pct > 0
+        ? "Pick up where you left off and keep the momentum going."
+        : "Open Phase 1 and begin with Python & Mathematics — the foundation for everything else." }),
+      el("button", { class: "btn btn-primary btn-lg",
+        text: pct > 0 ? "↪ Continue studying" : "🚀 Start with Phase 1",
+        onclick: () => switchView("notes") }),
+    ])
+  );
+
+  root.appendChild(
+    el("div", { class: "landing-footer", text: "NeuroPath · a self-paced AI/ML study roadmap · your progress stays in your browser" })
+  );
+
+  landingEl.appendChild(root);
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────
 
 Promise.all([fetchTopics(), fetchProgress().catch(() => ({}))])
   .then(([tree, progress]) => {
     TREE = tree;
+    applyPhaseColors(TREE);
     PROGRESS = progress;
     updateSubtitle();
-    renderSidebar();
-    renderNoteView();
+    switchView(currentView); // initial view is "landing"
   })
   .catch(() => {
     subtitleEl.textContent = "Failed to load";
+    landingEl.hidden = true;
+    mainEl.hidden = false;
     treeEl.innerHTML = "";
     treeEl.appendChild(el("div", { class: "tree-error", text: "Could not load topics. Is the backend running?" }));
   });

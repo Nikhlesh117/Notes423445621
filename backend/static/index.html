@@ -3,22 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI/ML Notes</title>
+  <title>NeuroPath — AI/ML Mastery Roadmap</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="app">
     <header class="app-header">
       <div class="app-header-left">
-        <span class="app-logo">🧠</span>
-        <div>
-          <div class="app-title">AI/ML Learning Roadmap</div>
-          <div class="app-subtitle" id="app-subtitle">Loading…</div>
-        </div>
+        <button class="menu-toggle" id="menu-toggle" aria-label="Toggle menu">☰</button>
+        <button class="brand" id="brand" aria-label="Home">
+          <span class="app-logo">🧠</span>
+          <div class="brand-text">
+            <div class="app-title">NeuroPath</div>
+            <div class="app-subtitle" id="app-subtitle">Loading…</div>
+          </div>
+        </button>
       </div>
 
       <div class="app-header-center">
-        <input id="search-input" class="global-search" placeholder="Search all topics…" />
+        <input id="search-input" class="global-search" placeholder="Search topics…" />
         <div class="tier-filter" id="tier-filter">
           <button class="tier-pill active" data-tier="all">All</button>
           <button class="tier-pill" data-tier="1">T1</button>
@@ -29,15 +32,17 @@
 
       <div class="app-header-right">
         <nav class="view-tabs" id="view-tabs">
-          <button class="view-tab active" data-view="notes">📝 Notes</button>
-          <button class="view-tab" data-view="roadmap">🗺️ Roadmap</button>
-          <button class="view-tab" data-view="dashboard">📊 Progress</button>
+          <button class="view-tab active" data-view="landing">🏠 <span class="tab-label">Home</span></button>
+          <button class="view-tab" data-view="notes">📝 <span class="tab-label">Notes</span></button>
+          <button class="view-tab" data-view="roadmap">🗺️ <span class="tab-label">Roadmap</span></button>
+          <button class="view-tab" data-view="dashboard">📊 <span class="tab-label">Progress</span></button>
         </nav>
         <button class="theme-toggle" id="theme-toggle" title="Toggle dark / light mode">🌙</button>
       </div>
     </header>
 
     <div class="app-body">
+      <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
       <aside class="app-sidebar" id="app-sidebar">
         <div class="sidebar">
           <div class="sidebar-tree" id="sidebar-tree"></div>
@@ -46,6 +51,7 @@
       <main class="app-main" id="app-main"></main>
       <div class="app-roadmap" id="app-roadmap" hidden></div>
       <div class="app-dashboard" id="app-dashboard" hidden></div>
+      <div class="app-landing" id="app-landing" hidden></div>
     </div>
   </div>
 
